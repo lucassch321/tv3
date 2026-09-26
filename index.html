@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TV Scoreboard</title>
+<style>
+  :root {
+    --bg: #0a0e14;
+    --card-bg: #131a24;
+    --accent: #4fd1c5;
+    --text: #f5f7fa;
+    --muted: #7d8a9c;
+    --live: #ff5a5a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
+    overflow: hidden;
+  }
+  #stage {
+    width: 100vw; height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    position: relative;
+  }
+  .card {
+    position: absolute;
+    width: 88vw; max-width: 1200px;
+    background: var(--card-bg);
+    border-radius: 28px;
+    padding: 4vh 5vw;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    opacity: 0;
+    transform: scale(0.96);
+    transition: opacity 0.6s ease, transform 0.6s ease;
+    pointer-events: none;
+  }
+  .card.active {
+    opacity: 1;
+    transform: scale(1);
+    pointer-events: auto;
+  }
+  .league-tag {
+    text-align: center;
+    color: var(--muted);
+    letter-spacing: 0.3em;
+    font-size: 1.1vw;
+    font-weight: 600;
+    text-transform: uppercase;
+    margin-bottom: 3vh;
+  }
+  .matchup {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 4vw;
+  }
+  .team {
+    flex: 1;
+    display: flex; flex-direction: column; align-items: center;
+    gap: 1.5vh;
+  }
+  .team img {
+    width: 12vw; max-width: 160px; height: auto;
+  }
+  .team-name {
+    font-size: 2.4vw;
+    font-weight: 700;
+    text-align: center;
+  }
+  .score {
+    font-size: 6vw;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+  }
+  .vs {
+    font-size: 2vw;
+    color: var(--muted);
+    font-weight: 300;
+  }
+  .status-row {
+    text-align: center;
+    margin-top: 4vh;
+    font-size: 1.6vw;
+    color: var(--muted);
+  }
+  .status-row.live {
+    color: var(--live);
+    font-weight: 700;
+  }
+  .inning-line {
+    text-align: center;
+    margin-top: 1vh;
+    font-size: 1.3vw;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1.2vw;
+  }
+  .outs {
+    display: flex;
+    gap: 0.5vw;
+    align-items: center;
+  }
+  .outs .label {
+    color: var(--muted);
+    font-size: 1.1vw;
+    margin-right: 0.3vw;
+  }
+  .out-dot {
+    width: 0.9vw; height: 0.9vw;
+    border-radius: 50%;
+    border: 2px solid var(--live);
+    background: transparent;
+  }
+  .out-dot.filled { background: var(--live); }
+  .at-bat {
+    font-size: 1vw;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--live);
+    text-transform: uppercase;
+    height: 1.4vw;
+  }
+  .dot {
+    display: inline-block;
+    width: 0.7vw; height: 0.7vw;
+    border-radius: 50%;
+    background: var(--live);
+    margin-right: 0.6vw;
+    animation: pulse 1.4s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  #footer {
+    position: fixed;
+    bottom: 2vh; left: 0; right: 0;
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.9vw;
+    letter-spacing: 0.1em;
+  }
+  #dots {
+    position: fixed;
+    top: 3vh; left: 0; right: 0;
+    display: flex; justify-content: center; gap: 0.8vw;
+  }
+  #dots span {
+    width: 0.6vw; height: 0.6vw; border-radius: 50%;
+    background: var(--muted); opacity: 0.4;
+    transition: opacity 0.3s, background 0.3s;
+  }
+  #dots span.on { opacity: 1; background: var(--accent); }
+  #error {
+    position: fixed; top: 2vh; right: 2vw;
+    color: var(--muted); font-size: 0.9vw;
+  }
+</style>
+</head>
+<body>
+  <div id="dots"></div>
+  <div id="stage"></div>
+  <div id="footer">Updated <span id="updated-at">--</span></div>
+  <div id="error"></div>
+
+<script>
+// ---- Configuration ----
+// Add or remove teams here. "sport" must be one of the keys in SPORTS below.
+// "match" is used to find the team in that sport's scoreboard feed (checks team name,
+// shortDisplayName, and abbreviation - tries an exact match first, then falls back to
+// a substring match, so "Ohio State" won't accidentally match "Ohio").
+const TEAMS = [
+  { match: "Cubs", league: "MLB", sport: "mlb" },
+  { match: "Twins", league: "MLB", sport: "mlb" },
+  { match: "Ohio State", league: "NCAAF", sport: "cfb" },
+  { match: "North Carolina", league: "NCAAF", sport: "cfb" },
+  { match: "Panthers", league: "NFL", sport: "nfl" }
+];
+
+const SPORTS = {
+  mlb: {
+    type: "baseball",
+    url: "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
+  },
+  nfl: {
+    type: "football",
+    url: "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
+  },
+  cfb: {
+    type: "football",
+    // groups=80 = FBS (top division); limit raised so smaller-market games aren't cut off
+    url: "https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300"
+  }
+};
+
+const REFRESH_DATA_MS = 60 * 1000;   // how often to re-fetch scores
+const CYCLE_CARD_MS   = 8 * 1000;    // how often to flip to the next card
+
+let cards = [];       // rendered card data, one per team currently found
+let activeIndex = 0;
+
+function findTeamEvent(events, needle) {
+  const lower = needle.toLowerCase();
+  // Pass 1: exact match on any name field (avoids "Ohio" matching "Ohio State", etc.)
+  for (const event of events) {
+    const comp = event.competitions && event.competitions[0];
+    if (!comp) continue;
+    const competitors = comp.competitors || [];
+    const hit = competitors.find(c => {
+      const t = c.team || {};
+      const haystacks = [t.displayName, t.shortDisplayName, t.name, t.location, t.abbreviation]
+        .filter(Boolean).map(s => s.toLowerCase());
+      return haystacks.some(h => h === lower);
+    });
+    if (hit) return { event, competitors };
+  }
+  // Pass 2: fall back to substring match
+  for (const event of events) {
+    const comp = event.competitions && event.competitions[0];
+    if (!comp) continue;
+    const competitors = comp.competitors || [];
+    const hit = competitors.find(c => {
+      const t = c.team || {};
+      const haystacks = [t.displayName, t.shortDisplayName, t.name, t.location, t.abbreviation]
+        .filter(Boolean).map(s => s.toLowerCase());
+      return haystacks.some(h => h.includes(lower));
+    });
+    if (hit) return { event, competitors };
+  }
+  return null;
+}
+
+async function fetchScores() {
+  try {
+    // Fetch each sport's scoreboard once, even if multiple teams share it
+    const neededSports = [...new Set(TEAMS.map(t => t.sport))];
+    const eventsBySport = {};
+    await Promise.all(neededSports.map(async key => {
+      const res = await fetch(SPORTS[key].url);
+      if (!res.ok) throw new Error(key + " HTTP " + res.status);
+      const data = await res.json();
+      eventsBySport[key] = data.events || [];
+    }));
+
+    const found = TEAMS.map(team => {
+      const sportType = SPORTS[team.sport].type;
+      const events = eventsBySport[team.sport] || [];
+      const match = findTeamEvent(events, team.match);
+
+      if (!match) {
+        return { league: team.league, noGame: true, teamName: team.match };
+      }
+
+      const { event, competitors } = match;
+      const away = competitors.find(c => c.homeAway === "away");
+      const home = competitors.find(c => c.homeAway === "home");
+      const comp = event.competitions[0];
+      const status = event.status || {};
+      const situation = comp.situation || {};
+      const isLive = status.type ? status.type.state === "in" : false;
+
+      const base = {
+        league: team.league,
+        sportType,
+        away: { name: away.team.shortDisplayName, logo: away.team.logo, score: away.score ?? "-" },
+        home: { name: home.team.shortDisplayName, logo: home.team.logo, score: home.score ?? "-" },
+        statusText: status.type ? status.type.shortDetail : "Scheduled",
+        isLive,
+        isFinal: status.type ? status.type.state === "post" : false
+      };
+
+      if (sportType === "baseball") {
+        const detailText = status.type ? (status.type.detail || status.type.shortDetail || "") : "";
+        let half = null;
+        if (/bottom/i.test(detailText)) half = "bottom";
+        else if (/top/i.test(detailText)) half = "top";
+        else if (/mid/i.test(detailText)) half = "mid";
+        else if (/end/i.test(detailText)) half = "end";
+
+        return {
+          ...base,
+          half,
+          inningNumber: status.period || null,
+          outs: typeof situation.outs === "number" ? situation.outs : null,
+          battingSide: half === "top" ? "away" : half === "bottom" ? "home" : null
+        };
+      }
+
+      if (sportType === "football") {
+        const possessionId = situation.possession;
+        let possessionSide = null;
+        if (possessionId) {
+          if (String(away.id) === String(possessionId) || String(away.team.id) === String(possessionId)) possessionSide = "away";
+          else if (String(home.id) === String(possessionId) || String(home.team.id) === String(possessionId)) possessionSide = "home";
+        }
+        return {
+          ...base,
+          quarter: status.period || null,
+          clock: status.displayClock || null,
+          downDistanceText: situation.shortDownDistanceText || situation.downDistanceText || null,
+          possessionSide
+        };
+      }
+
+      return base;
+    });
+
+    cards = found;
+    document.getElementById("error").textContent = "";
+    document.getElementById("updated-at").textContent =
+      new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    render();
+  } catch (err) {
+    document.getElementById("error").textContent = "Couldn't refresh scores — retrying";
+    console.error(err);
+  }
+}
+
+function cardHTML(card) {
+  if (card.noGame) {
+    return `
+      <div class="league-tag">${card.league}</div>
+      <div class="status-row" style="margin-top:6vh;font-size:2vw;">
+        No game today for ${card.teamName}
+      </div>
+    `;
+  }
+  const statusClass = card.isLive ? "status-row live" : "status-row";
+  const statusHTML = card.isLive
+    ? `<span class="dot"></span>${card.statusText}`
+    : card.statusText;
+
+  const ordinal = n => {
+    if (n === null || n === undefined) return "";
+    const s = ["th", "st", "nd", "rd"], v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  };
+
+  let inningLineHTML = "";
+  let awayBadge = `<div class="at-bat"></div>`;
+  let homeBadge = `<div class="at-bat"></div>`;
+
+  if (card.sportType === "baseball") {
+    const halfLabel = { top: "Top", bottom: "Bottom", mid: "Mid", end: "End" }[card.half] || "";
+    const inningText = card.inningNumber ? `${halfLabel} ${ordinal(card.inningNumber)}`.trim() : "";
+    const outsHTML = card.outs !== null && card.outs !== undefined
+      ? `<div class="outs"><span class="label">Outs</span>${
+          [0, 1, 2].map(i => `<span class="out-dot${i < card.outs ? " filled" : ""}"></span>`).join("")
+        }</div>`
+      : "";
+    inningLineHTML = card.isLive && (inningText || outsHTML)
+      ? `<div class="inning-line">${inningText ? `<span>${inningText}</span>` : ""}${outsHTML}</div>`
+      : "";
+    if (card.isLive && card.battingSide === "away") awayBadge = `<div class="at-bat">At Bat</div>`;
+    if (card.isLive && card.battingSide === "home") homeBadge = `<div class="at-bat">At Bat</div>`;
+  }
+
+  if (card.sportType === "football") {
+    const quarterText = card.quarter ? `Q${card.quarter}` : "";
+    const clockText = card.clock && card.clock !== "0:00" ? card.clock : "";
+    const parts = [quarterText, clockText].filter(Boolean).join(" • ");
+    const downDistanceHTML = card.downDistanceText
+      ? `<span>${card.downDistanceText}</span>` : "";
+    inningLineHTML = card.isLive && (parts || downDistanceHTML)
+      ? `<div class="inning-line">${parts ? `<span>${parts}</span>` : ""}${downDistanceHTML}</div>`
+      : "";
+    if (card.isLive && card.possessionSide === "away") awayBadge = `<div class="at-bat">Ball</div>`;
+    if (card.isLive && card.possessionSide === "home") homeBadge = `<div class="at-bat">Ball</div>`;
+  }
+
+  return `
+    <div class="league-tag">${card.league}</div>
+    <div class="matchup">
+      <div class="team">
+        <img src="${card.away.logo}" alt="${card.away.name}">
+        <div class="team-name">${card.away.name}</div>
+        <div class="score">${card.away.score}</div>
+        ${awayBadge}
+      </div>
+      <div class="vs">@</div>
+      <div class="team">
+        <img src="${card.home.logo}" alt="${card.home.name}">
+        <div class="team-name">${card.home.name}</div>
+        <div class="score">${card.home.score}</div>
+        ${homeBadge}
+      </div>
+    </div>
+    <div class="${statusClass}">${statusHTML}</div>
+    ${inningLineHTML}
+  `;
+}
+
+function render() {
+  const stage = document.getElementById("stage");
+  stage.innerHTML = "";
+  cards.forEach((card, i) => {
+    const el = document.createElement("div");
+    el.className = "card" + (i === activeIndex ? " active" : "");
+    el.innerHTML = cardHTML(card);
+    stage.appendChild(el);
+  });
+
+  const dotsWrap = document.getElementById("dots");
+  dotsWrap.innerHTML = "";
+  cards.forEach((_, i) => {
+    const d = document.createElement("span");
+    if (i === activeIndex) d.classList.add("on");
+    dotsWrap.appendChild(d);
+  });
+}
+
+function nextCard() {
+  if (cards.length === 0) return;
+  activeIndex = (activeIndex + 1) % cards.length;
+  render();
+}
+
+fetchScores();
+setInterval(fetchScores, REFRESH_DATA_MS);
+setInterval(nextCard, CYCLE_CARD_MS);
+</script>
+</body>
+</html>
