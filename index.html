@@ -6,19 +6,24 @@
 <title>TV Scoreboard</title>
 <style>
   :root {
-    --bg: #0a0e14;
-    --card-bg: #131a24;
-    --accent: #4fd1c5;
-    --text: #f5f7fa;
-    --muted: #7d8a9c;
-    --live: #ff5a5a;
+    --bg-1: #1c130c;
+    --bg-2: #100a06;
+    --card-top: #3a2617;
+    --card-bottom: #241608;
+    --card-border: #5c4326;
+    --gold: #c9a463;
+    --gold-dim: #9c7f4f;
+    --green: #4d6a4f;
+    --text: #f1e6d3;
+    --muted: #a68f70;
+    --live: #b5551f;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body {
     width: 100%; height: 100%;
-    background: var(--bg);
+    background: radial-gradient(ellipse at 50% 35%, var(--bg-1) 0%, var(--bg-2) 75%);
     color: var(--text);
-    font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
+    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
     overflow: hidden;
   }
   #stage {
@@ -29,10 +34,11 @@
   .card {
     position: absolute;
     width: 88vw; max-width: 1200px;
-    background: var(--card-bg);
-    border-radius: 28px;
+    background: linear-gradient(160deg, var(--card-top) 0%, var(--card-bottom) 100%);
+    border: 1px solid var(--card-border);
+    border-radius: 18px;
     padding: 4vh 5vw;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    box-shadow: 0 24px 70px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,220,170,0.08);
     opacity: 0;
     transform: scale(0.96);
     transition: opacity 0.6s ease, transform 0.6s ease;
@@ -45,8 +51,8 @@
   }
   .league-tag {
     text-align: center;
-    color: var(--muted);
-    letter-spacing: 0.3em;
+    color: var(--gold-dim);
+    letter-spacing: 0.35em;
     font-size: 1.1vw;
     font-weight: 600;
     text-transform: uppercase;
@@ -63,21 +69,25 @@
   }
   .team img {
     width: 12vw; max-width: 160px; height: auto;
+    filter: drop-shadow(0 4px 10px rgba(0,0,0,0.5));
   }
   .team-name {
     font-size: 2.4vw;
     font-weight: 700;
     text-align: center;
+    color: var(--text);
   }
   .score {
     font-size: 6vw;
     font-weight: 800;
     font-variant-numeric: tabular-nums;
+    color: var(--gold);
   }
   .vs {
     font-size: 2vw;
-    color: var(--muted);
-    font-weight: 300;
+    color: var(--green);
+    font-weight: 400;
+    font-style: italic;
   }
   .status-row {
     text-align: center;
@@ -120,7 +130,7 @@
     font-size: 1vw;
     font-weight: 700;
     letter-spacing: 0.1em;
-    color: var(--live);
+    color: var(--green);
     text-transform: uppercase;
     height: 1.4vw;
   }
@@ -154,7 +164,7 @@
     background: var(--muted); opacity: 0.4;
     transition: opacity 0.3s, background 0.3s;
   }
-  #dots span.on { opacity: 1; background: var(--accent); }
+  #dots span.on { opacity: 1; background: var(--gold); }
   #error {
     position: fixed; top: 2vh; right: 2vw;
     color: var(--muted); font-size: 0.9vw;
@@ -177,7 +187,7 @@ const TEAMS = [
   { match: "Cubs", league: "MLB", sport: "mlb" },
   { match: "Twins", league: "MLB", sport: "mlb" },
   { match: "Ohio State", league: "NCAAF", sport: "cfb" },
-  { match: "North Carolina", league: "NCAAF", sport: "cfb" },
+  { match: "North Carolina", espnId: "153", league: "NCAAF", sport: "cfb" },
   { match: "Panthers", league: "NFL", sport: "nfl" }
 ];
 
@@ -203,8 +213,21 @@ const CYCLE_CARD_MS   = 8 * 1000;    // how often to flip to the next card
 let cards = [];       // rendered card data, one per team currently found
 let activeIndex = 0;
 
-function findTeamEvent(events, needle) {
-  const lower = needle.toLowerCase();
+function findTeamEvent(events, team) {
+  // If an exact ESPN team id is given, trust it completely - this is what avoids
+  // "North Carolina" ambiguously matching East Carolina or NC Central.
+  if (team.espnId) {
+    for (const event of events) {
+      const comp = event.competitions && event.competitions[0];
+      if (!comp) continue;
+      const competitors = comp.competitors || [];
+      const hit = competitors.find(c => String(c.id) === String(team.espnId) || String((c.team || {}).id) === String(team.espnId));
+      if (hit) return { event, competitors };
+    }
+    return null;
+  }
+
+  const lower = team.match.toLowerCase();
   // Pass 1: exact match on any name field (avoids "Ohio" matching "Ohio State", etc.)
   for (const event of events) {
     const comp = event.competitions && event.competitions[0];
@@ -249,7 +272,7 @@ async function fetchScores() {
     const found = TEAMS.map(team => {
       const sportType = SPORTS[team.sport].type;
       const events = eventsBySport[team.sport] || [];
-      const match = findTeamEvent(events, team.match);
+      const match = findTeamEvent(events, team);
 
       if (!match) {
         return { league: team.league, noGame: true, teamName: team.match };
